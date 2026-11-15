@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sync Test</title>
+<style>
+  body { font-family: system-ui, sans-serif; font-size: 20px; max-width: 640px; margin: 24px auto; padding: 0 16px; background: #fff; color: #111; }
+  .row { padding: 12px; margin: 10px 0; border-radius: 8px; background: #f1f1f1; }
+  .ok { background: #dff3e3; } .bad { background: #fbe0e0; }
+</style>
+</head>
+<body>
+<h1>Sync test</h1>
+<p>This checks whether this computer can save progress to the Google Sheet. It takes a few seconds.</p>
+<div id="a" class="row">1. Reach the Google Sheet: checking...</div>
+<div id="b" class="row">2. Save a test record: waiting...</div>
+<div id="c" class="row">3. Read it back: waiting...</div>
+<p>Tell Claude which lines are green.</p>
+<script>
+const URL_ = "https://script.google.com/macros/s/AKfycbw2J4auWUqPsN-xcwO45MDjPSUgdnM0zvtMiVrPb3CPHJNAPPba0I1sTIiSDHKkTw5GMQ/exec";
+function set(id, ok, msg){ const el=document.getElementById(id); el.className="row "+(ok?"ok":"bad"); el.textContent=msg; }
+if(!URL_){ set("a",false,"1. No Sheet address is set in this page yet."); }
+else {
+  const stamp = String(Date.now());
+  fetch(URL_+"?action=ping").then(r=>r.json()).then(j=>{
+    if(!j.ok) throw new Error("bad reply");
+    set("a",true,"1. Reach the Google Sheet: YES");
+    return fetch(URL_,{method:"POST",body:JSON.stringify({code:"TEST0000",data:JSON.stringify({test:stamp}),summary:{learned:"test row (safe to delete)"}})}).then(r=>r.json());
+  }).then(j=>{
+    if(!j||!j.ok) throw new Error("save failed");
+    set("b",true,"2. Save a test record: YES");
+    return fetch(URL_+"?action=load&code=TEST0000").then(r=>r.json());
+  }).then(j=>{
+    const ok = j && j.ok && j.data && JSON.parse(j.data).test===stamp;
+    set("c",ok, ok?"3. Read it back: YES. Syncing will work here.":"3. Read it back: NO");
+  }).catch(e=>{
+    ["a","b","c"].forEach(id=>{ const el=document.getElementById(id); if(!el.className.includes("ok")) set(id,false,el.textContent.replace(/checking...|waiting.../,"NO ("+e.message+")")); });
+  });
+}
+</script>
+</body>
+</html>
