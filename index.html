@@ -222,9 +222,10 @@ function home(){
   </div>
   <button class="btn" id="go-progress">📊 Am I ready?<span class="sub">See your progress</span></button>`);
   on("go-today",today10); on("go-learn",learnList); on("go-signs",signsHome); on("go-test",practiceTest);
-  on("go-missed",()=>{ const ids=Q.filter(q=>S.q[q.id]&&S.q[q.id].missed).map(q=>q.id); if(!ids.length) return note("No missed questions right now. Nice work!"); runQuiz(shuffle(ids).slice(0,10),"Missed questions",{}); });
+  on("go-missed",missedRun);
   on("go-star",starredList); on("go-progress",progress);
 }
+function missedRun(){ const ids=Q.filter(q=>S.q[q.id]&&S.q[q.id].missed).map(q=>q.id); if(!ids.length) return note("No missed questions right now. Nice work!"); runQuiz(shuffle(ids).slice(0,10),"Missed questions",{again:missedRun,againLabel:"Keep going"}); }
 function note(msg){ h(`<div class="panel">${esc(msg)}</div><button class="btn primary" id="back">Back home</button>`); on("back",home); }
 
 /* ---------- choosing questions ---------- */
@@ -239,7 +240,7 @@ function today10(){
   }
   if(pick.length<10) pick=pick.concat(due.slice(6,6+(10-pick.length)));
   if(!pick.length) return note("You've seen every question and nothing is due today. Try a practice test!");
-  runQuiz(shuffle(pick),"Today's practice",{});
+  runQuiz(shuffle(pick),"Today's practice",{again:today10,againLabel:"Keep going: 10 more"});
 }
 
 /* ---------- quiz engine ---------- */
@@ -287,7 +288,7 @@ function runQuiz(ids,title,opt){
     }
     h(`<div class="panel center"><div class="big">${right} of ${ids.length}</div><div>${right===ids.length?"Perfect! 🎉":right>=ids.length*0.7?"Great work!":"Good practice. Every miss is a chance to learn."}</div>
       ${wrongIds.length?`<div class="meta" style="margin-top:6px">${wrongIds.length} went to your Missed list. They'll come back until you get them right on two different days.</div>`:""}</div>
-      ${opt.again?`<button class="btn primary" id="again">Practice more of this topic</button>`:""}
+      ${opt.again?`<button class="btn primary" id="again">${opt.againLabel||"Practice more of this topic"}</button>`:""}
       <button class="btn ${opt.again?"":"primary"}" id="hm">Done for now</button>`);
     on("hm",home); if(opt.again) on("again",opt.again);
   }
