@@ -81,7 +81,7 @@ const CH_NAMES = {1:"Your License",2:"Alcohol and the Law",3:"Your Driving Privi
 /* ---------- storage ---------- */
 const KEY = "ncPermitPractice.v1";
 let canSave = true;
-function blank(){ return {q:{}, s:{}, starred:{}, tests:[], signTests:[], settings:{auto:false, rate:0.9, voice:"", size:"normal"}}; }
+function blank(){ return {q:{}, s:{}, starred:{}, tests:[], signTests:[], settings:{auto:false, rate:0.9, voice:"", size:"normal", goal:20}, days:{}}; }
 let S = blank();
 try { const raw = localStorage.getItem(KEY); if(raw) S = Object.assign(blank(), JSON.parse(raw)); localStorage.setItem(KEY+".probe","1"); }
 catch(e){ canSave = false; }
@@ -118,7 +118,7 @@ function merge(local,cloud){
     q: mergeStore(local.q||{}, cloud.q||{}), s: mergeStore(local.s||{}, cloud.s||{}),
     tests: (cloud.tests||[]).length > (local.tests||[]).length ? cloud.tests : local.tests,
     signTests: (cloud.signTests||[]).length > (local.signTests||[]).length ? cloud.signTests : local.signTests,
-    settings: local.settings });
+    settings: local.settings, days: Object.assign({}, cloud.days||{}, local.days||{}) });
 }
 function pull(){
   if(!SYNC_URL||!syncCode) return Promise.resolve(false);
@@ -161,7 +161,7 @@ function record(store,id,correct){
     r.due=addDays(t,GAPS[r.box]); r.last=t;
     if(r.box>=2) r.missed=false;
   } else { r.wrong++; r.box=0; r.due=t; r.missed=true; r.last=t; }
-  store[id]=r; save();
+  store[id]=r; const t2=today(); S.days=S.days||{}; S.days[t2]=(S.days[t2]||0)+1; save();
 }
 const learned = (store,id) => (store[id] && store[id].box>=2);
 const seen = (store,id) => !!store[id];
@@ -191,7 +191,7 @@ function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.flo
 function setTitle(t){ document.getElementById("title").textContent=t; }
 function h(html){ stopTalk(); app.innerHTML=html; window.scrollTo(0,0); }
 function on(id,fn){ const el=document.getElementById(id); if(el) el.onclick=fn; }
-document.getElementById("homeBtn").onclick=()=>home();
+document.getElementById("homeBtn").onclick=()=>{ if(SESSION){ if(!confirm("End this study session?")) return; return sessionDone(); } home(); };
 document.getElementById("setBtn").onclick=()=>settings();
 function applySize(){ document.body.classList.remove("large","xl"); if(S.settings.size==="large") document.body.classList.add("large"); if(S.settings.size==="xl") document.body.classList.add("xl"); }
 applySize();
@@ -212,7 +212,11 @@ function home(){
   <div class="panel center"><div class="big">${c.learnedN} of ${Q.length}</div><div class="meta">questions learned</div>
   <div class="bar"><i style="width:${(100*c.learnedN/Q.length).toFixed(1)}%"></i></div>
   <div class="meta" id="syncline">${syncLine()}</div></div>
-  <button class="btn primary" id="go-today">Today's practice<span class="sub">10 questions${c.dueN?` · ${c.dueN} ready to review`:""}</span></button>
+  <div class="panel"><div class="row"><b>Today: ${todayCount()} of ${S.settings.goal||20}</b>${todayCount()>=(S.settings.goal||20)?" ✅":""}<span class="spacer"></span><span class="meta">Practiced ${streak()} of the last 7 days</span></div>
+  <div class="bar"><i style="width:${Math.min(100,100*todayCount()/(S.settings.goal||20)).toFixed(0)}%"></i></div></div>
+  <h2>Study session</h2>
+  <div class="row"><button class="btn primary" style="flex:1" id="go-s20">20 minutes</button><button class="btn primary" style="flex:1" id="go-s50">50 minutes</button></div>
+  <button class="btn" id="go-today">Quick practice<span class="sub">10 questions${c.dueN?` · ${c.dueN} ready to review`:""}</span></button>
   <button class="btn" id="go-learn">📘 Learn a topic<span class="sub">Read the rule, then practice it</span></button>
   <button class="btn" id="go-signs">🛑 Signs<span class="sub">${c.signsLearned} of ${allSignItems().length} learned</span></button>
   <button class="btn" id="go-test">📝 Practice test<span class="sub">25 questions, like the real test</span></button>
@@ -221,7 +225,7 @@ function home(){
     <button class="btn" style="flex:1" id="go-star">⭐ Starred<span class="sub">${c.starN} saved</span></button>
   </div>
   <button class="btn" id="go-progress">📊 Am I ready?<span class="sub">See your progress</span></button>`);
-  on("go-today",today10); on("go-learn",learnList); on("go-signs",signsHome); on("go-test",practiceTest);
+  on("go-today",today10); on("go-s20",()=>startSession(20)); on("go-s50",()=>startSession(50)); on("go-learn",learnList); on("go-signs",signsHome); on("go-test",practiceTest);
   on("go-missed",missedRun);
   on("go-star",starredList); on("go-progress",progress);
 }
@@ -229,7 +233,23 @@ function missedRun(){ const ids=Q.filter(q=>S.q[q.id]&&S.q[q.id].missed).map(q=>
 function note(msg){ h(`<div class="panel">${esc(msg)}</div><button class="btn primary" id="back">Back home</button>`); on("back",home); }
 
 /* ---------- choosing questions ---------- */
-function today10(){
+function nextQuestions(n){
+  const due=shuffle(Q.filter(q=>isDue(S.q,q.id))).sort((a,b)=>S.q[a.id].box-S.q[b.id].box).map(q=>q.id);
+  let pick=due.slice(0,Math.ceil(n*0.6));
+  for(const c of CARDS){
+    if(pick.length>=n) break;
+    const fresh=c.qids.filter(id=>!seen(S.q,id)&&!pick.includes(id)).map(id=>QBY[id]);
+    fresh.sort((a,b)=>(a.style==="plain"?0:1)-(b.style==="plain"?0:1));
+    for(const q of fresh){ if(pick.length>=n) break; pick.push(q.id); }
+  }
+  for(const id of due){ if(pick.length>=n) break; if(!pick.includes(id)) pick.push(id); }
+  if(pick.length<n){ const old=Q.filter(q=>seen(S.q,q.id)&&!pick.includes(q.id)).sort((a,b)=>(S.q[a.id].last||"").localeCompare(S.q[b.id].last||"")); for(const q of shuffle(old.slice(0,n*3))){ if(pick.length>=n) break; pick.push(q.id); } }
+  return shuffle(pick);
+}
+function todayCount(){ return (S.days&&S.days[today()])||0; }
+function streak(){ let n=0; for(let i=0;i<7;i++){ if(S.days&&S.days[addDays(today(),-i)]) n++; } return n; }
+function today10(){ const pick=nextQuestions(10); if(!pick.length) return note("No questions available."); runQuiz(pick,"Quick practice",{again:today10,againLabel:"Keep going: 10 more"}); }
+function today10_unused(){
   const due=shuffle(Q.filter(q=>isDue(S.q,q.id))).sort((a,b)=>S.q[a.id].box-S.q[b.id].box).map(q=>q.id);
   let pick=due.slice(0,6);
   for(const c of CARDS){
@@ -250,7 +270,7 @@ function runQuiz(ids,title,opt){
   function show(){
     const q=QBY[ids[i]]; const order=shuffle([q.correct].concat(q.wrong));
     const starOn=!!S.starred[q.id];
-    h(`<div class="row meta"><span>Question ${i+1} of ${ids.length}</span><span class="spacer"></span>
+    h(`<div class="row meta"><span>Question ${i+1} of ${ids.length}</span><span class="spacer"></span>${SESSION?`<span id="timer">${timerText()}</span>`:""}
       <button class="iconbtn" id="spk" aria-label="Read aloud">🔊</button>
       <button class="iconbtn star ${starOn?"on":""}" id="st" aria-label="Star">${starOn?"★":"☆"}</button></div>
       <div class="panel"><div class="qtext">${esc(q.q)}</div>
@@ -277,6 +297,7 @@ function runQuiz(ids,title,opt){
   }
   function next(){ i++; if(i<ids.length) show(); else finish(); }
   function finish(){
+    if(opt.onDone) return opt.onDone({right,n:ids.length});
     if(opt.test){
       const score=right, n=ids.length, pass=score>=Math.ceil(n*0.8);
       S.tests.push({d:today(),score,n}); save();
@@ -371,11 +392,11 @@ function pickSigns(list,n){
   if(p.length<n) p=p.concat(shuffle(list.filter(x=>!p.includes(x))).slice(0,n-p.length));
   return shuffle(p);
 }
-function signDrill(items,title,isTest){
+function signDrill(items,title,isTest,onDone){
   let i=0, right=0; setTitle(title);
   function show(){
     const it=items[i];
-    h(`<div class="meta">Sign ${i+1} of ${items.length}</div>
+    h(`<div class="row meta"><span>Sign ${i+1} of ${items.length}</span><span class="spacer"></span>${SESSION?`<span id="timer">${timerText()}</span>`:""}</div>
       <div class="panel center">${signFace(it)}<p>What does this sign mean? <b>Say it out loud.</b></p>
       <div id="ans"></div><button class="btn primary" id="reveal">Check my answer</button></div>`);
     on("reveal",()=>{
@@ -389,6 +410,7 @@ function signDrill(items,title,isTest){
   }
   function grade(ok){ record(S.s,items[i].key,ok); if(ok) right++; i++; if(i<items.length) show(); else finish(); }
   function finish(){
+    if(onDone) return onDone({right,n:items.length});
     if(isTest){ S.signTests.push({d:today(),score:right,n:items.length}); save(); }
     const pass=right>=9;
     h(`<div class="panel center"><div class="big">${right} of ${items.length}</div><div>${isTest?(pass?"✅ Passing! (9 needed)":"Keep practicing. You need 9 of 12."):"Nice work!"}</div></div>
@@ -396,6 +418,48 @@ function signDrill(items,title,isTest){
     on("more",signsHome); on("hm",home);
   }
   show();
+}
+
+/* ---------- study sessions ---------- */
+let SESSION=null;
+const FAST = location.hash==="#fast";
+function minsLeft(){ return Math.max(0,Math.ceil((SESSION.end-Date.now())/60000)); }
+function timerText(){ return SESSION? "⏱ "+minsLeft()+" min left" : ""; }
+setInterval(()=>{ const t=document.getElementById("timer"); if(t&&SESSION) t.textContent=timerText(); },15000);
+function startSession(mins){
+  const plan = mins===20 ? [["q",17],["s",3]] : [["q",20],["s",5],["q",20],["s",5]];
+  const unit = FAST?1000:60000;
+  let t=Date.now(); const segs=plan.map(([k,m])=>{ const seg={k,start:t,end:t+m*unit}; t=seg.end; return seg; });
+  SESSION={mins,start:Date.now(),end:t,segs,q:0,qr:0,s:0,sr:0,rounds:0};
+  nextRound();
+}
+function currentSeg(){ const now=Date.now(); return SESSION.segs.find(g=>now<g.end)||null; }
+function nextRound(){
+  if(!SESSION) return home();
+  const seg=currentSeg();
+  if(!seg) return sessionDone();
+  if(seg.k==="q") runQuiz(nextQuestions(10),SESSION.mins+"-minute session",{onDone:r=>{ SESSION.q+=r.n; SESSION.qr+=r.right; SESSION.rounds++; between(r,"questions"); }});
+  else signDrill(pickSigns(allSignItems(),6),SESSION.mins+"-minute session",false,r=>{ SESSION.s+=r.n; SESSION.sr+=r.right; SESSION.rounds++; between(r,"signs"); });
+}
+function between(r,kind){
+  const seg=currentSeg();
+  if(!seg) return sessionDone();
+  const nextKind = seg.k==="q" ? "Questions" : "Signs";
+  setTitle(SESSION.mins+"-minute session");
+  h(`<div class="panel center"><div>Round done!</div><div class="big">${r.right} of ${r.n}</div>
+    <div class="meta" style="margin-top:6px">${timerText()} · Next: ${nextKind}</div></div>
+    <button class="btn primary" id="cont">Continue</button><button class="btn" id="stop">Stop for today</button>`);
+  on("cont",nextRound); on("stop",sessionDone);
+}
+function sessionDone(){
+  const S2=SESSION; SESSION=null; if(!S2) return home();
+  const pct = S2.q ? Math.round(100*S2.qr/S2.q) : 0;
+  setTitle("Session done");
+  h(`<div class="panel center"><div class="big">Great study session! 🎉</div>
+    <p>${S2.q} questions${S2.q?` · ${pct}% right`:""}${S2.s?` · ${S2.s} signs`:""}</p>
+    <div class="meta">Today: ${todayCount()} of ${S.settings.goal||20}${todayCount()>=(S.settings.goal||20)?" ✅":""}</div></div>
+    <button class="btn primary" id="hm">Back home</button>`);
+  on("hm",home); push();
 }
 
 /* ---------- progress ---------- */
@@ -427,6 +491,8 @@ function settings(){
       <div>Speed: <input type="range" id="rate" min="0.6" max="1.2" step="0.05" value="${S.settings.rate}"> <span id="rv">${S.settings.rate}</span></div>
       ${voices.length?`<div style="margin-top:8px">Voice: <select id="voice"><option value="">Default</option>${vopts}</select></div>`:""}
       <button class="btn small" id="test">🔊 Test the voice</button></div>
+    <div class="panel"><h2 style="margin-top:0">Daily goal</h2>
+      ${[10,20,30,50].map(g=>`<button class="btn small" data-g="${g}" style="${(S.settings.goal||20)===g?"border-color:var(--accent)":""}">${g} questions</button>`).join("")}</div>
     <div class="panel"><h2 style="margin-top:0">Text size</h2>
       ${["normal","large","xl"].map(z=>`<button class="btn small" data-z="${z}" style="${S.settings.size===z?"border-color:var(--accent)":""}">${z==="normal"?"Normal":z==="large"?"Large":"Extra large"}</button>`).join("")}</div>
     ${SYNC_URL?`<div class="panel"><h2 style="margin-top:0">Saving to the cloud</h2>
@@ -448,6 +514,7 @@ function settings(){
   on("test",()=>say("Hi! This is how questions will sound."));
   on("syncNow",()=>{ syncState="pending"; showSync(); push(); });
   on("chgCode",()=>codeScreen(home));
+  app.querySelectorAll("[data-g]").forEach(b=>b.onclick=()=>{S.settings.goal=+b.dataset.g;save();settings();});
   app.querySelectorAll("[data-z]").forEach(b=>b.onclick=()=>{S.settings.size=b.dataset.z;save();applySize();settings();});
   on("copy",()=>{ const t=document.getElementById("code"); t.select(); try{ navigator.clipboard.writeText(t.value); }catch(e){ document.execCommand("copy"); } document.getElementById("copy").textContent="Copied!"; });
   on("doRestore",()=>{ try{ const v=document.getElementById("restore").value.trim(); const o=JSON.parse(decodeURIComponent(escape(atob(v)))); if(!o.q||!o.settings) throw 0; S=Object.assign(blank(),o); save(); applySize(); note("Your progress is back!"); }catch(e){ alert("That code didn't work. Make sure you copied the whole thing."); } });
